@@ -20,9 +20,8 @@ def build_demo_state(periods: int = 220, seed: int = 7) -> dict:
     future = featured[featured.week_start > cutoff].copy()
     model = GlobalForecaster.fit(train)
     pred = model.predict(future)
-    ratios = claims.groupby("market_id").apply(
-        lambda x: x.workload_units.sum() / x.new_claim_count.sum(), include_groups=False
-    )
+    market_totals = claims.groupby("market_id")[["workload_units", "new_claim_count"]].sum()
+    ratios = market_totals.workload_units / market_totals.new_claim_count
     forecasts = format_forecasts(pred, pd.Timestamp(cutoff), ratios)
     forecasts = forecasts.merge(portfolio[["market_id", "region"]], on="market_id")
     workforce = generate_workforce(portfolio, seed + 2)

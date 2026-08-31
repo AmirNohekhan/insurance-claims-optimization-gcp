@@ -1,3 +1,4 @@
+from collections import OrderedDict
 from pathlib import Path
 
 import numpy as np
@@ -11,7 +12,7 @@ from insurance_claims_platform.forecasting import rolling_origins
 from insurance_claims_platform.optimization import optimize_workforce
 from insurance_claims_platform.pipeline import build_demo_state
 from insurance_claims_platform.scenarios import apply_scenario
-from insurance_claims_platform.serving.app import app, state
+from insurance_claims_platform.serving.app import _get_result, _store_result, app, state
 from insurance_claims_platform.simulation import generate_portfolio, generate_weekly_claims
 
 
@@ -208,3 +209,13 @@ def test_scenario_rejects_a_market_outside_the_forecast():
     )
     assert response.status_code == 422
     assert response.json()["detail"]["code"] == "CATASTROPHE_MARKET_NOT_FORECAST"
+
+
+def test_result_store_evicts_least_recently_used_items():
+    store: OrderedDict[str, dict] = OrderedDict()
+    _store_result(store, "old", {"value": 1}, max_items=2)
+    _store_result(store, "kept", {"value": 2}, max_items=2)
+    assert _get_result(store, "old") == {"value": 1}
+    _store_result(store, "new", {"value": 3}, max_items=2)
+    assert list(store) == ["old", "new"]
+    assert _get_result(store, "kept") is None

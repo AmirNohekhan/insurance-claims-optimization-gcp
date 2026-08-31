@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from collections import OrderedDict
 from functools import lru_cache
+from threading import RLock
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Request
@@ -11,9 +13,29 @@ from insurance_claims_platform.pipeline import build_demo_state
 from insurance_claims_platform.scenarios import apply_scenario
 
 app = FastAPI(title="Insurance Claims Decision Platform", version="0.1.0")
-FORECAST_STORE: dict[str, dict] = {}
-PLAN_STORE: dict[str, dict] = {}
+MAX_STORE_ITEMS = 1_000
+FORECAST_STORE: OrderedDict[str, dict] = OrderedDict()
+PLAN_STORE: OrderedDict[str, dict] = OrderedDict()
+STORE_LOCK = RLock()
 SUPPORTED_QUANTILES = {0.1, 0.5, 0.75, 0.9}
+
+
+def _store_result(
+    store: OrderedDict[str, dict], key: str, value: dict, max_items: int = MAX_STORE_ITEMS
+) -> None:
+    with STORE_LOCK:
+        store[key] = value
+        store.move_to_end(key)
+        while len(store) > max_items:
+            store.popitem(last=False)
+
+
+def _get_result(store: OrderedDict[str, dict], key: str) -> dict | None:
+    with STORE_LOCK:
+        value = store.get(key)
+        if value is not None:
+            store.move_to_end(key)
+        return value
 
 
 class ForecastRequest(BaseModel):
@@ -93,19 +115,23 @@ def forecast(req: ForecastRequest) -> dict:
     }
     quantile_columns = {f"p{int(q * 100)}" for q in req.quantiles}
     records = [
-        {key: value for key, value in record.items() if not key.startswith("p") or key in quantile_columns}
+        {
+            key: value
+            for key, value in record.items()
+            if not key.startswith("p") or key in quantile_columns
+        }
         for record in stored_payload["records"]
     ]
     payload = {**stored_payload, "quantiles": req.quantiles, "records": records}
-    FORECAST_STORE[forecast_id] = payload
+    _store_result(FORECAST_STORE, forecast_id, payload)
     return payload
 
 
 @app.post("/v1/optimize")
 def optimize(req: OptimizationRequest) -> dict:
-    if req.forecast_id not in FORECAST_STORE:
+    payload = _get_result(FORECAST_STORE, req.forecast_id)
+    if payload is None:
         raise HTTPException(404, detail={"code": "FORECAST_NOT_FOUND"})
-    payload = FORECAST_STORE[req.forecast_id]
     if req.planning_quantile not in payload["quantiles"]:
         raise HTTPException(
             422,
@@ -128,15 +154,15 @@ def optimize(req: OptimizationRequest) -> dict:
         req.allow_overtime,
         req.allow_reassignment,
     )
-    PLAN_STORE[plan["plan_id"]] = plan
+    _store_result(PLAN_STORE, plan["plan_id"], plan)
     return plan
 
 
 @app.post("/v1/scenarios")
 def scenarios(req: ScenarioRequest) -> dict:
-    if req.forecast_id not in FORECAST_STORE:
+    payload = _get_result(FORECAST_STORE, req.forecast_id)
+    if payload is None:
         raise HTTPException(404, detail={"code": "FORECAST_NOT_FOUND"})
-    payload = FORECAST_STORE[req.forecast_id]
     if req.planning_quantile not in payload["quantiles"]:
         raise HTTPException(
             422,
@@ -176,13 +202,15 @@ def scenarios(req: ScenarioRequest) -> dict:
 
 @app.get("/v1/forecasts/{forecast_id}")
 def get_forecast(forecast_id: str) -> dict:
-    if forecast_id not in FORECAST_STORE:
+    payload = _get_result(FORECAST_STORE, forecast_id)
+    if payload is None:
         raise HTTPException(404, "forecast not found")
-    return FORECAST_STORE[forecast_id]
+    return payload
 
 
 @app.get("/v1/plans/{plan_id}")
 def get_plan(plan_id: str) -> dict:
-    if plan_id not in PLAN_STORE:
+    plan = _get_result(PLAN_STORE, plan_id)
+    if plan is None:
         raise HTTPException(404, "plan not found")
-    return PLAN_STORE[plan_id]
+    return plan
