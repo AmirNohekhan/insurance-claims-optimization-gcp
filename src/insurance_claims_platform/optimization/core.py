@@ -53,15 +53,17 @@ def optimize_workforce(
     )
     markets = list(demand.index)
     n = len(markets)
-    # x assigned (integer), o overtime, s shortage, e excess. Transfers are derived vs current.
+    # x assigned, o overtime, s shortage, e excess, transfers in and transfers out.
     c = np.r_[
         np.repeat(costs.regular_adjuster_week, n),
         np.repeat(costs.overtime_hour, n),
         np.repeat(costs.shortage_unit + costs.backlog_unit, n),
         np.repeat(costs.overcapacity_unit, n),
+        np.repeat(costs.transfer_adjuster, n),
+        np.zeros(n),
     ]
-    integrality = np.r_[np.ones(n), np.zeros(3 * n)]
-    lb = np.r_[wf.minimum_adjusters, np.zeros(3 * n)]
+    integrality = np.r_[np.ones(n), np.zeros(3 * n), np.ones(2 * n)]
+    lb = np.r_[wf.minimum_adjusters, np.zeros(5 * n)]
     max_staff = np.maximum(
         wf.current_adjusters + np.ceil(wf.current_adjusters * costs.max_transfer_fraction),
         wf.minimum_adjusters,
@@ -69,7 +71,7 @@ def optimize_workforce(
     ub = np.r_[
         max_staff,
         costs.max_overtime_hours_per_adjuster * wf.current_adjusters.to_numpy(),
-        np.repeat(np.inf, 2 * n),
+        np.repeat(np.inf, 4 * n),
     ]
     if not allow_overtime:
         ub[n : 2 * n] = 0
@@ -77,7 +79,7 @@ def optimize_workforce(
         lb[:n] = wf.current_adjusters
         ub[:n] = wf.current_adjusters
     # capacity*x + overtime_capacity*o + shortage - excess = demand + backlog
-    Aeq = np.zeros((n, 4 * n))
+    Aeq = np.zeros((n, 6 * n))
     for i in range(n):
         Aeq[i, i] = costs.capacity_per_adjuster
         Aeq[i, n + i] = costs.overtime_capacity_per_hour
@@ -86,9 +88,22 @@ def optimize_workforce(
     constraints = [
         LinearConstraint(Aeq, (demand + opening).to_numpy(), (demand + opening).to_numpy())
     ]
+    # Assigned staff equals current staff plus net transfers.
+    transfer_balance = np.zeros((n, 6 * n))
+    for i in range(n):
+        transfer_balance[i, i] = 1
+        transfer_balance[i, 4 * n + i] = -1
+        transfer_balance[i, 5 * n + i] = 1
+    constraints.append(
+        LinearConstraint(
+            transfer_balance,
+            wf.current_adjusters.to_numpy(),
+            wf.current_adjusters.to_numpy(),
+        )
+    )
     # Conserve total staff; reassignment cannot create employees.
     total = int(wf.current_adjusters.sum())
-    conservation = np.zeros((1, 4 * n))
+    conservation = np.zeros((1, 6 * n))
     conservation[0, :n] = 1
     constraints.append(LinearConstraint(conservation, total, total))
     result = milp(
@@ -100,14 +115,14 @@ def optimize_workforce(
     )
     if not result.success or result.x is None:
         raise RuntimeError(f"Optimization infeasible: {result.message}")
-    x, overtime, shortage, excess = np.split(result.x, 4)
+    x, overtime, shortage, excess, transfers_in, transfers_out = np.split(result.x, 6)
     decisions = []
-    transfer_cost = 0.0
+    transfer_cost = float(transfers_in.sum() * costs.transfer_adjuster)
     for i, market in enumerate(markets):
         assigned = int(round(x[i]))
         current = int(wf.current_adjusters.iloc[i])
-        tin, tout = max(0, assigned - current), max(0, current - assigned)
-        transfer_cost += tin * costs.transfer_adjuster
+        tin = int(round(transfers_in[i]))
+        tout = int(round(transfers_out[i]))
         available = (
             assigned * costs.capacity_per_adjuster + overtime[i] * costs.overtime_capacity_per_hour
         )
@@ -129,7 +144,7 @@ def optimize_workforce(
     return {
         "plan_id": str(uuid4()),
         "planning_quantile": quantile,
-        "total_expected_cost": round(float(result.fun + transfer_cost), 2),
+        "total_expected_cost": round(float(result.fun), 2),
         "transfer_cost": round(transfer_cost, 2),
         "solver_status": result.message,
         "markets": [asdict(d) for d in decisions],

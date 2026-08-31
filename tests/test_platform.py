@@ -5,6 +5,7 @@ import pandas as pd
 from fastapi.testclient import TestClient
 
 from insurance_claims_platform.cloud import LocalEventPublisher, OperationalEvent
+from insurance_claims_platform.config import CostConfig
 from insurance_claims_platform.features import build_features
 from insurance_claims_platform.forecasting import rolling_origins
 from insurance_claims_platform.optimization import optimize_workforce
@@ -81,6 +82,32 @@ def test_optimizer_caps_overtime_by_each_markets_workforce():
     )
     small = next(item for item in plan["markets"] if item["market_id"] == "SMALL")
     assert small["overtime_hours"] <= 5 * 10
+
+
+def test_optimizer_includes_transfer_cost_in_its_decision():
+    forecasts = pd.DataFrame(
+        {
+            "market_id": ["A", "B"],
+            "p75": [320.0, 0.0],
+            "workload_ratio": [1.0, 1.0],
+        }
+    )
+    workforce = pd.DataFrame(
+        {
+            "market_id": ["A", "B"],
+            "current_adjusters": [10, 10],
+            "minimum_adjusters": [5, 5],
+        }
+    )
+    plan = optimize_workforce(
+        forecasts,
+        workforce,
+        quantile=0.75,
+        allow_overtime=False,
+        costs=CostConfig(transfer_adjuster=1_000_000),
+    )
+    assert all(item["recommended_adjusters"] == 10 for item in plan["markets"])
+    assert plan["transfer_cost"] == 0
 
 
 def test_local_publisher_is_idempotent(tmp_path: Path):
