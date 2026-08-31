@@ -12,13 +12,17 @@ def apply_scenario(
     if demand_multiplier <= 0 or catastrophe_multiplier <= 0:
         raise ValueError("Scenario multipliers must be positive")
     out = forecasts.copy()
-    cols = ["p10", "p50", "p75", "p90"]
+    cols = [column for column in ("p10", "p50", "p75", "p90") if column in out.columns]
+    if not cols:
+        raise ValueError("Forecasts must include at least one supported quantile column")
     out[cols] = out[cols] * demand_multiplier
     if catastrophe_market:
         mask = out.market_id == catastrophe_market
         out.loc[mask, cols] *= catastrophe_multiplier
         # Widen the upper tail under rare-event uncertainty.
-        out.loc[mask, "p75"] *= 1.06
-        out.loc[mask, "p90"] *= 1.14
+        if "p75" in out:
+            out.loc[mask, "p75"] *= 1.06
+        if "p90" in out:
+            out.loc[mask, "p90"] *= 1.14
     out[cols] = out[cols].round(2)
     return out

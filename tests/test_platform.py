@@ -124,3 +124,21 @@ def test_optimize_requires_a_requested_supported_quantile():
         "/v1/optimize", json={"forecast_id": forecast["forecast_id"], "planning_quantile": 0.8}
     )
     assert unsupported.status_code == 422
+
+
+def test_scenario_supports_a_single_requested_quantile():
+    client = TestClient(app)
+    forecast = client.post(
+        "/v1/forecast",
+        json={"markets": ["FL"], "horizon_weeks": 1, "quantiles": [0.5]},
+    ).json()
+    response = client.post(
+        "/v1/scenarios",
+        json={
+            "forecast_id": forecast["forecast_id"],
+            "planning_quantile": 0.5,
+            "catastrophe_market": "FL",
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["plan"]["planning_quantile"] == 0.5

@@ -47,9 +47,17 @@ class OptimizationRequest(BaseModel):
 
 class ScenarioRequest(BaseModel):
     forecast_id: str
+    planning_quantile: float = 0.9
     demand_multiplier: float = Field(1.0, gt=0, le=3)
     catastrophe_market: str | None = None
     catastrophe_multiplier: float = Field(1.65, gt=0, le=5)
+
+    @field_validator("planning_quantile")
+    @classmethod
+    def valid_planning_quantile(cls, value: float) -> float:
+        if value not in SUPPORTED_QUANTILES:
+            raise ValueError("supported planning quantiles are 0.1, 0.5, 0.75, 0.9")
+        return value
 
 
 @lru_cache(maxsize=1)
@@ -128,9 +136,19 @@ def optimize(req: OptimizationRequest) -> dict:
 def scenarios(req: ScenarioRequest) -> dict:
     if req.forecast_id not in FORECAST_STORE:
         raise HTTPException(404, detail={"code": "FORECAST_NOT_FOUND"})
+    payload = FORECAST_STORE[req.forecast_id]
+    if req.planning_quantile not in payload["quantiles"]:
+        raise HTTPException(
+            422,
+            detail={
+                "code": "QUANTILE_NOT_FORECAST",
+                "planning_quantile": req.planning_quantile,
+                "available_quantiles": payload["quantiles"],
+            },
+        )
     import pandas as pd
 
-    base = pd.DataFrame(FORECAST_STORE[req.forecast_id]["records"])
+    base = pd.DataFrame(payload["records"])
     adjusted = apply_scenario(
         base, req.demand_multiplier, req.catastrophe_market, req.catastrophe_multiplier
     )
@@ -138,7 +156,7 @@ def scenarios(req: ScenarioRequest) -> dict:
     workforce = workforce[workforce.market_id.isin(adjusted.market_id)]
     return {
         "scenario": req.model_dump(),
-        "plan": optimize_workforce(adjusted, workforce, quantile=0.9),
+        "plan": optimize_workforce(adjusted, workforce, quantile=req.planning_quantile),
     }
 
 
