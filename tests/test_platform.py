@@ -107,3 +107,20 @@ def test_forecast_rejects_empty_quantiles():
         "/v1/forecast", json={"markets": ["FL"], "horizon_weeks": 1, "quantiles": []}
     )
     assert response.status_code == 422
+
+
+def test_optimize_requires_a_requested_supported_quantile():
+    client = TestClient(app)
+    forecast = client.post(
+        "/v1/forecast",
+        json={"markets": ["FL"], "horizon_weeks": 1, "quantiles": [0.5]},
+    ).json()
+    missing = client.post(
+        "/v1/optimize", json={"forecast_id": forecast["forecast_id"], "planning_quantile": 0.9}
+    )
+    assert missing.status_code == 422
+    assert missing.json()["detail"]["code"] == "QUANTILE_NOT_FORECAST"
+    unsupported = client.post(
+        "/v1/optimize", json={"forecast_id": forecast["forecast_id"], "planning_quantile": 0.8}
+    )
+    assert unsupported.status_code == 422

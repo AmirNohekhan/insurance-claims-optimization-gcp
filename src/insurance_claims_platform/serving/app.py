@@ -13,6 +13,7 @@ from insurance_claims_platform.scenarios import apply_scenario
 app = FastAPI(title="Insurance Claims Decision Platform", version="0.1.0")
 FORECAST_STORE: dict[str, dict] = {}
 PLAN_STORE: dict[str, dict] = {}
+SUPPORTED_QUANTILES = {0.1, 0.5, 0.75, 0.9}
 
 
 class ForecastRequest(BaseModel):
@@ -25,7 +26,7 @@ class ForecastRequest(BaseModel):
     def valid_quantiles(cls, value: list[float]) -> list[float]:
         if not value:
             raise ValueError("at least one quantile is required")
-        if any(q not in {0.1, 0.5, 0.75, 0.9} for q in value):
+        if any(q not in SUPPORTED_QUANTILES for q in value):
             raise ValueError("supported quantiles are 0.1, 0.5, 0.75, 0.9")
         return list(dict.fromkeys(value))
 
@@ -35,6 +36,13 @@ class OptimizationRequest(BaseModel):
     planning_quantile: float = 0.75
     allow_overtime: bool = True
     allow_reassignment: bool = True
+
+    @field_validator("planning_quantile")
+    @classmethod
+    def valid_planning_quantile(cls, value: float) -> float:
+        if value not in SUPPORTED_QUANTILES:
+            raise ValueError("supported planning quantiles are 0.1, 0.5, 0.75, 0.9")
+        return value
 
 
 class ScenarioRequest(BaseModel):
@@ -75,22 +83,33 @@ def forecast(req: ForecastRequest) -> dict:
         "model_version": "global-hgb-conformal-1",
         "records": frame.to_dict("records"),
     }
-    FORECAST_STORE[forecast_id] = stored_payload
     quantile_columns = {f"p{int(q * 100)}" for q in req.quantiles}
     records = [
         {key: value for key, value in record.items() if not key.startswith("p") or key in quantile_columns}
         for record in stored_payload["records"]
     ]
-    return {**stored_payload, "quantiles": req.quantiles, "records": records}
+    payload = {**stored_payload, "quantiles": req.quantiles, "records": records}
+    FORECAST_STORE[forecast_id] = payload
+    return payload
 
 
 @app.post("/v1/optimize")
 def optimize(req: OptimizationRequest) -> dict:
     if req.forecast_id not in FORECAST_STORE:
         raise HTTPException(404, detail={"code": "FORECAST_NOT_FOUND"})
+    payload = FORECAST_STORE[req.forecast_id]
+    if req.planning_quantile not in payload["quantiles"]:
+        raise HTTPException(
+            422,
+            detail={
+                "code": "QUANTILE_NOT_FORECAST",
+                "planning_quantile": req.planning_quantile,
+                "available_quantiles": payload["quantiles"],
+            },
+        )
     import pandas as pd
 
-    forecasts = pd.DataFrame(FORECAST_STORE[req.forecast_id]["records"])
+    forecasts = pd.DataFrame(payload["records"])
     workforce = state()["workforce"]
     workforce = workforce[workforce.market_id.isin(forecasts.market_id)]
     plan = optimize_workforce(
