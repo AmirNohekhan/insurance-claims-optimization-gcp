@@ -10,7 +10,7 @@ from insurance_claims_platform.forecasting import rolling_origins
 from insurance_claims_platform.optimization import optimize_workforce
 from insurance_claims_platform.pipeline import build_demo_state
 from insurance_claims_platform.scenarios import apply_scenario
-from insurance_claims_platform.serving.app import app
+from insurance_claims_platform.serving.app import app, state
 from insurance_claims_platform.simulation import generate_portfolio, generate_weekly_claims
 
 
@@ -141,4 +141,21 @@ def test_scenario_supports_a_single_requested_quantile():
         },
     )
     assert response.status_code == 200
-    assert response.json()["plan"]["planning_quantile"] == 0.5
+    body = response.json()
+    assert body["plan"]["planning_quantile"] == 0.5
+    decision = body["plan"]["markets"][0]
+    assert decision["opening_backlog"] == round(float(state()["backlog"].loc["FL"]), 2)
+
+
+def test_scenario_rejects_a_market_outside_the_forecast():
+    client = TestClient(app)
+    forecast = client.post(
+        "/v1/forecast",
+        json={"markets": ["FL"], "horizon_weeks": 1, "quantiles": [0.9]},
+    ).json()
+    response = client.post(
+        "/v1/scenarios",
+        json={"forecast_id": forecast["forecast_id"], "catastrophe_market": "TX"},
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "CATASTROPHE_MARKET_NOT_FORECAST"

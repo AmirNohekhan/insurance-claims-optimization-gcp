@@ -149,6 +149,15 @@ def scenarios(req: ScenarioRequest) -> dict:
     import pandas as pd
 
     base = pd.DataFrame(payload["records"])
+    if req.catastrophe_market and req.catastrophe_market not in set(base.market_id):
+        raise HTTPException(
+            422,
+            detail={
+                "code": "CATASTROPHE_MARKET_NOT_FORECAST",
+                "catastrophe_market": req.catastrophe_market,
+                "forecast_markets": sorted(base.market_id.unique()),
+            },
+        )
     adjusted = apply_scenario(
         base, req.demand_multiplier, req.catastrophe_market, req.catastrophe_multiplier
     )
@@ -156,7 +165,12 @@ def scenarios(req: ScenarioRequest) -> dict:
     workforce = workforce[workforce.market_id.isin(adjusted.market_id)]
     return {
         "scenario": req.model_dump(),
-        "plan": optimize_workforce(adjusted, workforce, quantile=req.planning_quantile),
+        "plan": optimize_workforce(
+            adjusted,
+            workforce,
+            state()["backlog"],
+            quantile=req.planning_quantile,
+        ),
     }
 
 
