@@ -87,3 +87,23 @@ def test_api_contract():
         },
     )
     assert plan.status_code == 200 and plan.json()["markets"]
+
+
+def test_forecast_returns_only_requested_quantiles():
+    client = TestClient(app)
+    response = client.post(
+        "/v1/forecast",
+        json={"markets": ["FL"], "horizon_weeks": 1, "quantiles": [0.5, 0.9, 0.5]},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["quantiles"] == [0.5, 0.9]
+    assert {key for key in body["records"][0] if key.startswith("p")} == {"p50", "p90"}
+
+
+def test_forecast_rejects_empty_quantiles():
+    client = TestClient(app)
+    response = client.post(
+        "/v1/forecast", json={"markets": ["FL"], "horizon_weeks": 1, "quantiles": []}
+    )
+    assert response.status_code == 422

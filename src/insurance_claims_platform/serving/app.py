@@ -23,9 +23,11 @@ class ForecastRequest(BaseModel):
     @field_validator("quantiles")
     @classmethod
     def valid_quantiles(cls, value: list[float]) -> list[float]:
+        if not value:
+            raise ValueError("at least one quantile is required")
         if any(q not in {0.1, 0.5, 0.75, 0.9} for q in value):
             raise ValueError("supported quantiles are 0.1, 0.5, 0.75, 0.9")
-        return value
+        return list(dict.fromkeys(value))
 
 
 class OptimizationRequest(BaseModel):
@@ -68,13 +70,18 @@ def forecast(req: ForecastRequest) -> dict:
     frame = state()["forecasts"]
     frame = frame[frame.market_id.isin(req.markets) & (frame.horizon <= req.horizon_weeks)]
     forecast_id = str(uuid4())
-    payload = {
+    stored_payload = {
         "forecast_id": forecast_id,
         "model_version": "global-hgb-conformal-1",
         "records": frame.to_dict("records"),
     }
-    FORECAST_STORE[forecast_id] = payload
-    return payload
+    FORECAST_STORE[forecast_id] = stored_payload
+    quantile_columns = {f"p{int(q * 100)}" for q in req.quantiles}
+    records = [
+        {key: value for key, value in record.items() if not key.startswith("p") or key in quantile_columns}
+        for record in stored_payload["records"]
+    ]
+    return {**stored_payload, "quantiles": req.quantiles, "records": records}
 
 
 @app.post("/v1/optimize")
