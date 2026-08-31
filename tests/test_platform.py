@@ -61,6 +61,28 @@ def test_optimizer_integral_conserves_staff_and_scenario():
     )
 
 
+def test_optimizer_caps_overtime_by_each_markets_workforce():
+    forecasts = pd.DataFrame(
+        {
+            "market_id": ["SMALL", "LARGE"],
+            "p75": [200.0, 1.0],
+            "workload_ratio": [1.0, 1.0],
+        }
+    )
+    workforce = pd.DataFrame(
+        {
+            "market_id": ["SMALL", "LARGE"],
+            "current_adjusters": [5, 20],
+            "minimum_adjusters": [5, 20],
+        }
+    )
+    plan = optimize_workforce(
+        forecasts, workforce, quantile=0.75, allow_reassignment=False
+    )
+    small = next(item for item in plan["markets"] if item["market_id"] == "SMALL")
+    assert small["overtime_hours"] <= 5 * 10
+
+
 def test_local_publisher_is_idempotent(tmp_path: Path):
     pub = LocalEventPublisher(tmp_path / "events.jsonl")
     event = OperationalEvent("claim.reported", "FL", {"claim_count": 1}, event_id="fixed")

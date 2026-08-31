@@ -68,7 +68,7 @@ def optimize_workforce(
     )
     ub = np.r_[
         max_staff,
-        np.repeat(costs.max_overtime_hours_per_adjuster * max(wf.current_adjusters), n),
+        costs.max_overtime_hours_per_adjuster * wf.current_adjusters.to_numpy(),
         np.repeat(np.inf, 2 * n),
     ]
     if not allow_overtime:
