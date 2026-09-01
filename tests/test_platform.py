@@ -113,10 +113,19 @@ def test_optimizer_includes_transfer_cost_in_its_decision():
 
 
 def test_local_publisher_is_idempotent(tmp_path: Path):
-    pub = LocalEventPublisher(tmp_path / "events.jsonl")
+    path = tmp_path / "events.jsonl"
+    pub = LocalEventPublisher(path)
     event = OperationalEvent("claim.reported", "FL", {"claim_count": 1}, event_id="fixed")
     assert pub.publish(event) == pub.publish(event)
-    assert len((tmp_path / "events.jsonl").read_text().splitlines()) == 1
+    assert LocalEventPublisher(path).publish(event) == "fixed"
+    assert len(path.read_text().splitlines()) == 1
+
+
+def test_local_publisher_rejects_a_corrupt_event_log(tmp_path: Path):
+    path = tmp_path / "events.jsonl"
+    path.write_text("not-json\n", encoding="utf-8")
+    with np.testing.assert_raises(ValueError):
+        LocalEventPublisher(path)
 
 
 def test_api_contract():

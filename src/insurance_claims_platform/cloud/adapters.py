@@ -4,6 +4,7 @@ import json
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from threading import Lock
 from typing import Protocol
 from uuid import uuid4
 
@@ -37,16 +38,34 @@ class EventPublisher(Protocol):
 class LocalEventPublisher:
     def __init__(self, path: Path):
         self.path = path
-        self.seen: set[str] = set()
+        self.seen = self._load_seen()
+        self._lock = Lock()
+
+    def _load_seen(self) -> set[str]:
+        if not self.path.exists():
+            return set()
+        seen: set[str] = set()
+        with self.path.open(encoding="utf-8") as stream:
+            for line_number, line in enumerate(stream, start=1):
+                try:
+                    event_id = json.loads(line).get("event_id")
+                except (json.JSONDecodeError, AttributeError) as exc:
+                    raise ValueError(
+                        f"Invalid event record at {self.path}:{line_number}"
+                    ) from exc
+                if event_id:
+                    seen.add(str(event_id))
+        return seen
 
     def publish(self, event: OperationalEvent) -> str:
         event = event.normalized()
-        if event.event_id in self.seen:
-            return event.event_id
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self.path.open("a", encoding="utf-8") as stream:
-            stream.write(json.dumps(asdict(event)) + "\n")
-        self.seen.add(event.event_id)
+        with self._lock:
+            if event.event_id in self.seen:
+                return event.event_id
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            with self.path.open("a", encoding="utf-8") as stream:
+                stream.write(json.dumps(asdict(event)) + "\n")
+            self.seen.add(event.event_id)
         return event.event_id
 
 
