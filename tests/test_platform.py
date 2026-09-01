@@ -9,6 +9,7 @@ from insurance_claims_platform.cloud import LocalEventPublisher, OperationalEven
 from insurance_claims_platform.config import CostConfig
 from insurance_claims_platform.features import build_features
 from insurance_claims_platform.forecasting import rolling_origins
+from insurance_claims_platform.monitoring import drift_summary
 from insurance_claims_platform.optimization import optimize_workforce
 from insurance_claims_platform.pipeline import build_demo_state
 from insurance_claims_platform.scenarios import apply_scenario
@@ -219,3 +220,24 @@ def test_result_store_evicts_least_recently_used_items():
     _store_result(store, "new", {"value": 3}, max_items=2)
     assert list(store) == ["old", "new"]
     assert _get_result(store, "kept") is None
+
+
+def test_drift_summary_counts_values_outside_reference_range():
+    reference = np.arange(100, dtype=float)
+    shifted = np.arange(1_000, 1_100, dtype=float)
+    result = drift_summary(reference, shifted)
+    assert result["psi"] > 1
+    assert result["ks"] == 1
+    assert result["wasserstein"] > 900
+
+
+def test_drift_summary_rejects_invalid_samples():
+    invalid_samples = (
+        (np.array([]), np.array([1])),
+        (np.array([1]), np.array([np.nan])),
+    )
+    for reference, current in invalid_samples:
+        with np.testing.assert_raises(ValueError):
+            drift_summary(reference, current)
+    with np.testing.assert_raises(ValueError):
+        drift_summary(np.array([1]), np.array([1]), bins=1)
