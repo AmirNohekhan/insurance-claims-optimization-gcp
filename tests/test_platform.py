@@ -10,7 +10,7 @@ from insurance_claims_platform.config import CostConfig
 from insurance_claims_platform.features import build_features
 from insurance_claims_platform.forecasting import rolling_origins
 from insurance_claims_platform.monitoring import drift_summary
-from insurance_claims_platform.optimization import optimize_workforce
+from insurance_claims_platform.optimization import optimize_workforce, realized_cost
 from insurance_claims_platform.pipeline import build_demo_state
 from insurance_claims_platform.scenarios import apply_scenario
 from insurance_claims_platform.serving.app import _get_result, _store_result, app, state
@@ -110,6 +110,23 @@ def test_optimizer_includes_transfer_cost_in_its_decision():
     )
     assert all(item["recommended_adjusters"] == 10 for item in plan["markets"])
     assert plan["transfer_cost"] == 0
+
+
+def test_realized_cost_includes_opening_backlog():
+    plan = {
+        "transfer_cost": 0.0,
+        "markets": [
+            {
+                "market_id": "A",
+                "recommended_adjusters": 1,
+                "overtime_hours": 0.0,
+                "opening_backlog": 20.0,
+            }
+        ],
+    }
+    result = realized_cost(plan, pd.Series({"A": 0.0}))
+    assert result["unserved_workload"] == 4.0
+    assert result["service_level"] == 0.8
 
 
 def test_local_publisher_is_idempotent(tmp_path: Path):

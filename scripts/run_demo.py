@@ -32,7 +32,7 @@ def main() -> None:
         for q in (0.5, 0.75, 0.9)
     }
     realized = future.groupby("market_id").workload_units.mean()
-    backtest = decision_backtest(forecasts, state["workforce"], realized)
+    backtest = decision_backtest(forecasts, state["workforce"], realized, backlog=state["backlog"])
     hurricane = apply_scenario(forecasts, catastrophe_market="FL")
     hurricane_plan = optimize_workforce(hurricane, state["workforce"], state["backlog"], 0.9)
     print("\nINSURANCE CLAIMS FORECAST -> UNCERTAINTY -> WORKFORCE DECISION")

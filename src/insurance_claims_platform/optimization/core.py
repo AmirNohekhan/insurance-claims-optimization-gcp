@@ -160,8 +160,10 @@ def realized_cost(
         decision.recommended_adjusters * costs.capacity_per_adjuster
         + decision.overtime_hours * costs.overtime_capacity_per_hour
     )
-    shortage = np.maximum(realized.reindex(decision.index).fillna(0) - capacity, 0)
-    service = float((1 - shortage.sum() / max(realized.sum(), 1)).clip(0, 1))
+    opening_backlog = decision.get("opening_backlog", pd.Series(0.0, index=decision.index))
+    required = realized.reindex(decision.index).fillna(0) + opening_backlog
+    shortage = np.maximum(required - capacity, 0)
+    service = float(np.clip(1 - shortage.sum() / max(required.sum(), 1), 0, 1))
     cost = (
         decision.recommended_adjusters.sum() * costs.regular_adjuster_week
         + decision.overtime_hours.sum() * costs.overtime_hour

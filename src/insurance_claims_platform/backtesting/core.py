@@ -10,10 +10,11 @@ def decision_backtest(
     workforce: pd.DataFrame,
     realized: pd.Series,
     quantiles: tuple[float, ...] = (0.5, 0.75, 0.9),
+    backlog: pd.Series | None = None,
 ) -> pd.DataFrame:
     rows = []
     for q in quantiles:
-        plan = optimize_workforce(forecasts, workforce, quantile=q)
+        plan = optimize_workforce(forecasts, workforce, backlog=backlog, quantile=q)
         rows.append(
             {
                 "policy": f"ML P{int(q * 100)}",
@@ -22,12 +23,18 @@ def decision_backtest(
             }
         )
     static = workforce.set_index("market_id").current_adjusters * 16
-    shortage = (realized.reindex(static.index) - static).clip(lower=0)
+    opening = (
+        backlog.reindex(static.index).fillna(0)
+        if backlog is not None
+        else pd.Series(0.0, index=static.index)
+    )
+    required = realized.reindex(static.index).fillna(0) + opening
+    shortage = (required - static).clip(lower=0)
     rows.append(
         {
             "policy": "Static staffing",
             "realized_cost": float(workforce.current_adjusters.sum() * 2200 + shortage.sum() * 840),
-            "service_level": float(1 - shortage.sum() / realized.sum()),
+            "service_level": float((1 - shortage.sum() / max(required.sum(), 1)).clip(0, 1)),
             "unserved_workload": float(shortage.sum()),
             "planned_cost": float(workforce.current_adjusters.sum() * 2200),
         }
